@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Function;
 
@@ -28,6 +29,7 @@ import org.opentest4j.TestAbortedException;
 
 import io.quarkus.runtime.test.TestHttpEndpointProvider;
 import io.quarkus.test.common.ArtifactLauncher;
+import io.quarkus.test.common.ArtifactLauncher.InitContext.DevServicesLaunchResult;
 import io.quarkus.test.common.DefaultNativeImageLauncher;
 import io.quarkus.test.common.LauncherUtil;
 import io.quarkus.test.common.NativeImageLauncher;
@@ -112,7 +114,7 @@ public class NativeTestExtension
 
     private IntegrationTestExtensionState doNativeStart(ExtensionContext context, Class<? extends QuarkusTestProfile> profile)
             throws Throwable {
-        Map<String, String> devServicesProps = handleDevServices(context, false).properties();
+        DevServicesLaunchResult devServicesLaunchResult = handleDevServices(context, false);
         quarkusTestProfile = profile;
         currentJUnitTestClass = context.getRequiredTestClass();
         TestResourceManager testResourceManager = null;
@@ -125,14 +127,15 @@ public class NativeTestExtension
             testResourceManager = new TestResourceManager(requiredTestClass, quarkusTestProfile,
                     getAdditionalTestResources(testProfileAndProperties.testProfile, currentJUnitTestClass.getClassLoader()),
                     testProfileAndProperties.testProfile != null
-                            && testProfileAndProperties.testProfile.disableGlobalTestResources());
+                            && testProfileAndProperties.testProfile.disableGlobalTestResources(),
+                    devServicesLaunchResult.properties(), Optional.ofNullable(devServicesLaunchResult.networkId()));
             testResourceManager.init(
                     testProfileAndProperties.testProfile != null ? testProfileAndProperties.testProfile.getClass().getName()
                             : null);
             hasPerTestResources = testResourceManager.hasPerTestResources();
 
             Map<String, String> additionalProperties = new HashMap<>(testProfileAndProperties.properties);
-            additionalProperties.putAll(devServicesProps);
+            additionalProperties.putAll(devServicesLaunchResult.properties());
             Map<String, String> resourceManagerProps = testResourceManager.start();
             Map<String, String> old = new HashMap<>();
             for (Map.Entry<String, String> i : resourceManagerProps.entrySet()) {
