@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -88,6 +89,8 @@ public class DefaultDockerContainerLauncher implements DockerContainerArtifactLa
             httpsPort = getRandomPort();
         }
 
+        Map<String, String> configOverrides = configurationToPass();
+
         List<String> args = new ArrayList<>();
         args.add(containerRuntimeBinaryName);
         args.add("run");
@@ -111,21 +114,11 @@ public class DefaultDockerContainerLauncher implements DockerContainerArtifactLa
             args.add("--net=" + devServicesLaunchResult.networkId());
         }
 
-        if (DefaultJarLauncher.HTTP_PRESENT) {
-            args.addAll(toEnvVar("quarkus.http.port", "" + httpPort));
-            args.addAll(toEnvVar("quarkus.http.ssl-port", "" + httpsPort));
-            // this won't be correct when using the random port but it's really only used by us for the rest client tests
-            // in the main module, since those tests hit the application itself
-            args.addAll(toEnvVar("test.url", TestHTTPResourceManager.getUri()));
-        }
-        if (testProfile != null) {
-            args.addAll(toEnvVar("quarkus.profile", testProfile));
-        }
+        passConfigurationAsJDKJavaOptionsEnvvar(args, configOverrides);
 
-        for (Map.Entry<String, String> e : systemProps.entrySet()) {
-            args.addAll(toEnvVar(e.getKey(), e.getValue()));
-        }
         args.add(containerImage);
+
+        passConfigurationAsSysPropForNative(args, configOverrides);
 
         Path logFile = PropertyTestUtil.getLogFilePath();
         Files.deleteIfExists(logFile);
@@ -152,6 +145,48 @@ public class DefaultDockerContainerLauncher implements DockerContainerArtifactLa
         }
     }
 
+    private Map<String, String> configurationToPass() {
+        Map<String, String> configurationMap = new LinkedHashMap<>();
+        if (DefaultJarLauncher.HTTP_PRESENT) {
+            configurationMap.put("quarkus.http.port", "" + httpPort);
+            configurationMap.put("quarkus.http.ssl-port", "" + httpsPort);
+            // this won't be correct when using the random port but it's really only used by us for the rest client tests
+            // in the main module, since those tests hit the application itself
+            configurationMap.put("test.url", TestHTTPResourceManager.getUri());
+        }
+        if (testProfile != null) {
+            configurationMap.put("quarkus.profile", testProfile);
+        }
+        configurationMap.putAll(systemProps);
+        return configurationMap;
+    }
+
+    private void passConfigurationAsJDKJavaOptionsEnvvar(List<String> args, Map<String, String> configOverrides) {
+        if (!configOverrides.isEmpty()) {
+            StringBuilder buffer = new StringBuilder("JDK_JAVA_OPTIONS=");
+            boolean first = true;
+            for (Map.Entry<String, String> entry : configOverrides.entrySet()) {
+                if (first) {
+                    first = false;
+                } else {
+                    buffer.append(" ");
+                }
+                buffer.append("'-D").append(entry.getKey()).append("=").append(entry.getValue()).append("'");
+            }
+            //            buffer.append("\"");
+            args.add("-e");
+            args.add(buffer.toString());
+        }
+    }
+
+    private void passConfigurationAsSysPropForNative(List<String> args, Map<String, String> configOverrides) {
+        if (!configOverrides.isEmpty()) {
+            for (Map.Entry<String, String> entry : configOverrides.entrySet()) {
+                args.add("-D" + entry.getKey() + "=" + entry.getValue());
+            }
+        }
+    }
+
     private String determineBinary() {
         return ContainerRuntimeUtil.detectContainerRuntime().getExecutableName();
     }
@@ -168,20 +203,6 @@ public class DefaultDockerContainerLauncher implements DockerContainerArtifactLa
 
     public void includeAsSysProps(Map<String, String> systemProps) {
         this.systemProps.putAll(systemProps);
-    }
-
-    private List<String> toEnvVar(String property, String value) {
-        if ((property != null) && (!property.isEmpty())) {
-            List<String> result = new ArrayList<>(2);
-            result.add("--env");
-            result.add(String.format("%s=%s", convertPropertyToEnVar(property), value));
-            return result;
-        }
-        return Collections.emptyList();
-    }
-
-    private String convertPropertyToEnVar(String property) {
-        return property.toUpperCase().replace('-', '_').replace('.', '_').replace('/', '_');
     }
 
     @Override
